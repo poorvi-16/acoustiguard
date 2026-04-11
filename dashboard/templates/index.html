@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AcoustiGuard — Live UTM Dashboard</title>
+  <meta charset="UTF-8">
+
+  <link rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#06080F; color:#E8EFFF;
+           font-family:Arial,sans-serif; }
+
+    #header {
+      background:#0B1120; padding:12px 24px;
+      border-bottom:3px solid #FF6B2B;
+      display:flex; align-items:center;
+      justify-content:space-between; height:52px;
+    }
+    #header h1 { font-size:20px; color:#fff; font-weight:bold; }
+    #header-right { font-size:12px; color:#7A8FAE;
+                    display:flex; gap:20px; align-items:center; }
+
+    #statsbar {
+      background:#101E38; padding:0 24px;
+      display:flex; gap:0; font-size:12px;
+      color:#7A8FAE; border-bottom:1px solid #1E3A5F;
+      height:36px; align-items:center;
+    }
+    .stat-item {
+      padding:0 18px; border-right:1px solid #1E3A5F;
+      display:flex; align-items:center; gap:7px;
+    }
+    .stat-item:first-child { padding-left:0; }
+    .stat-item:last-child  { border-right:none; }
+    .sv  { font-weight:bold; color:#00E5A0; font-size:13px; }
+    .sv.blue  { color:#1E90FF; }
+    .sv.alert { color:#FF3B5C; }
+
+    #map {
+      position:absolute;
+      top:88px; left:0; right:0; bottom:0;
+    }
+
+    #alert-banner {
+      display:none; position:fixed;
+      top:100px; left:50%; transform:translateX(-50%);
+      background:#FF3B5C; color:#fff;
+      padding:14px 40px; border-radius:4px;
+      font-size:18px; font-weight:bold;
+      z-index:9999; letter-spacing:1px;
+      box-shadow:0 4px 20px rgba(255,59,92,0.5);
+      animation:blink 0.8s infinite;
+    }
+    @keyframes blink {
+      0%,100%{opacity:1;} 50%{opacity:0.6;}
+    }
+
+    #detection-log {
+      position:fixed; bottom:20px; right:20px;
+      background:#0B1120EE; border:1px solid #1E3A5F;
+      border-radius:4px; padding:12px;
+      width:290px; max-height:220px;
+      overflow-y:auto; z-index:1000;
+    }
+    #detection-log h4 {
+      color:#FF6B2B; margin-bottom:8px;
+      font-size:12px; text-transform:uppercase;
+      letter-spacing:1px;
+    }
+    .log-item {
+      color:#7A8FAE; padding:4px 0;
+      border-bottom:1px solid #1A2E4A;
+      font-size:11px; line-height:1.4;
+    }
+    .log-time  { color:#1E90FF; font-weight:bold; }
+    .log-drone { color:#00E5A0; }
+    .log-alert { color:#FF3B5C; font-weight:bold; }
+
+    #spectrogram-panel {
+      position:fixed; bottom:20px; left:20px;
+      background:#0B1120EE; border:1px solid #1E3A5F;
+      border-radius:4px; padding:12px;
+      width:260px; z-index:1000;
+    }
+    #spectrogram-panel h4 {
+      color:#FF6B2B; margin-bottom:8px;
+      font-size:12px; text-transform:uppercase;
+      letter-spacing:1px;
+    }
+    #spec-canvas {
+      width:100%; height:70px;
+      background:#060D1A; display:block;
+      border:1px solid #1E3A5F; border-radius:2px;
+    }
+    #conf-bar {
+      height:6px; background:#1E3A5F;
+      border-radius:3px; margin-top:8px; overflow:hidden;
+    }
+    #conf-fill {
+      height:100%; width:0%; background:#FF6B2B;
+      border-radius:3px; transition:width 0.3s,background 0.3s;
+    }
+    #conf-label {
+      font-size:11px; color:#7A8FAE; margin-top:5px;
+      display:flex; justify-content:space-between;
+    }
+    #conf-status { font-weight:bold; color:#00E5A0; }
+
+    #node-panel {
+      position:fixed; top:100px; left:20px;
+      background:#0B1120EE; border:1px solid #1E3A5F;
+      border-radius:4px; padding:12px;
+      width:200px; z-index:1000;
+    }
+    #node-panel h4 {
+      color:#1E90FF; margin-bottom:8px;
+      font-size:12px; text-transform:uppercase;
+      letter-spacing:1px;
+    }
+    .node-row {
+      display:flex; align-items:center;
+      gap:8px; font-size:11px;
+      color:#7A8FAE; padding:3px 0;
+    }
+    .ndot {
+      width:8px; height:8px; border-radius:50%;
+      background:#00E5A0; flex-shrink:0;
+    }
+
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-track { background:#060D1A; }
+    ::-webkit-scrollbar-thumb {
+      background:#1E3A5F; border-radius:2px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <h1>👁&nbsp; AcoustiGuard — Live UTM Dashboard</h1>
+  <div id="header-right">
+    <span>IISc Campus Demo &nbsp;·&nbsp;
+          Passive Acoustic Drone Detection</span>
+    <span>Team Clusters — SJB Institute of Technology</span>
+  </div>
+</div>
+
+<!-- STATS BAR -->
+<div id="statsbar">
+  <div class="stat-item">
+    Nodes Online&nbsp;<span class="sv" id="nodes-val">3 / 3</span>
+  </div>
+  <div class="stat-item">
+    Drones Detected&nbsp;<span class="sv" id="drone-val">0</span>
+  </div>
+  <div class="stat-item">
+    Last Detection&nbsp;<span class="sv" id="time-val">—</span>
+  </div>
+  <div class="stat-item">
+    Position Accuracy&nbsp;<span class="sv">±18m</span>
+  </div>
+  <div class="stat-item">
+    Detection Range&nbsp;<span class="sv blue">200m</span>
+  </div>
+  <div class="stat-item">
+    System Status&nbsp;<span class="sv" id="status-val">ACTIVE</span>
+  </div>
+</div>
+
+<!-- ALERT BANNER -->
+<div id="alert-banner">
+  ⚠&nbsp;&nbsp;GEO-FENCE BREACH — ALERT SENT
+</div>
+
+<!-- MAP -->
+<div id="map"></div>
+
+<!-- NODE PANEL -->
+<div id="node-panel">
+  <h4>📡 Sensor Nodes</h4>
+  <div class="node-row">
+    <div class="ndot"></div>Node A — Main Gate
+  </div>
+  <div class="node-row">
+    <div class="ndot"></div>Node B — Library
+  </div>
+  <div class="node-row">
+    <div class="ndot"></div>Node C — Sports Complex
+  </div>
+</div>
+
+<!-- SPECTROGRAM -->
+<div id="spectrogram-panel">
+  <h4>🔊 Live Acoustic Feed</h4>
+  <canvas id="spec-canvas" width="236" height="70"></canvas>
+  <div id="conf-bar"><div id="conf-fill"></div></div>
+  <div id="conf-label">
+    <span>Confidence: <b id="conf-pct">0%</b></span>
+    <span id="conf-status">CLEAR</span>
+  </div>
+</div>
+
+<!-- DETECTION LOG -->
+<div id="detection-log">
+  <h4>📋 Detection Log</h4>
+  <div id="log-entries"></div>
+</div>
+
+
+<script>
+// ── MAP INIT ───────────────────────────────────────────
+const map = L.map('map').setView([12.9716, 77.5946], 16);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  attribution:'© OpenStreetMap contributors',
+  maxZoom:19
+}).addTo(map);
+
+// Force map to recalculate size after render
+setTimeout(() => map.invalidateSize(), 300);
+
+// ── IOT NODES ──────────────────────────────────────────
+const NODES = [
+  {lat:12.97160, lon:77.59460, label:'Node A — Main Gate'},
+  {lat:12.97450, lon:77.59700, label:'Node B — Library'},
+  {lat:12.96980, lon:77.59750, label:'Node C — Sports Complex'},
+];
+
+NODES.forEach(n => {
+  L.circleMarker([n.lat, n.lon], {
+    radius:10, color:'#1E90FF',
+    fillColor:'#1E90FF', fillOpacity:0.9, weight:2,
+  }).addTo(map)
+   .bindPopup(`<b style="color:#1E90FF">${n.label}</b><br>
+               Status: <b style="color:#00E5A0">Active</b><br>
+               Range: 200m`);
+
+  L.circle([n.lat, n.lon], {
+    radius:200, color:'#1E90FF',
+    fillColor:'#1E90FF', fillOpacity:0.04,
+    weight:1, dashArray:'4,8',
+  }).addTo(map);
+});
+
+// ── GEO-FENCE ──────────────────────────────────────────
+const FENCE = [
+  [12.9720, 77.5948],[12.9735, 77.5948],
+  [12.9735, 77.5965],[12.9720, 77.5965],
+];
+
+const geofence = L.polygon(FENCE, {
+  color:'#FF3B5C', weight:2,
+  fillColor:'#FF3B5C', fillOpacity:0.13,
+  dashArray:'8,5',
+}).addTo(map);
+
+geofence.bindPopup(
+  `<b style="color:#FF3B5C">🚫 No-Fly Zone</b><br>
+   IISc Main Building<br>Geo-fence: ACTIVE`
+);
+
+// ── SINGLE DRONE STATE ─────────────────────────────────
+const DRONE_ID   = "DRONE_001";
+let   droneMarker  = null;
+let   trailLine    = null;
+let   predLine     = null;
+let   trailPoints  = [];
+let   speedHistory = [];
+let   detectedOnce = false;
+let   breachActive = false;
+
+// Drone icon
+const droneIcon = L.divIcon({
+  html:`<div style="font-size:26px;
+        filter:drop-shadow(0 0 8px #FF6B2B)">🚁</div>`,
+  iconSize:[30,30], iconAnchor:[15,15], className:'',
+});
+
+// ── HELPERS ────────────────────────────────────────────
+function addLog(text, type) {
+  const div = document.createElement('div');
+  div.className = 'log-item';
+  const t = new Date().toLocaleTimeString();
+  const cls = type === 'alert' ? 'log-alert' : 'log-drone';
+  div.innerHTML =
+    `<span class="log-time">${t}</span> ` +
+    `<span class="${cls}">${text}</span>`;
+  const log = document.getElementById('log-entries');
+  log.insertBefore(div, log.firstChild);
+  while (log.children.length > 15) log.removeChild(log.lastChild);
+}
+
+function inGeofence(lat, lon) {
+  const b = L.latLngBounds(FENCE.map(c=>L.latLng(c[0],c[1])));
+  return b.contains(L.latLng(lat, lon));
+}
+
+function getSpeed(lat, lon) {
+  speedHistory.push({lat, lon, t:Date.now()});
+  if (speedHistory.length > 5) speedHistory.shift();
+  if (speedHistory.length < 2) return null;
+  const p1 = speedHistory[speedHistory.length-2];
+  const p2 = speedHistory[speedHistory.length-1];
+  const dt = (p2.t - p1.t) / 1000;
+  if (dt <= 0) return null;
+  const dlat = (p2.lat-p1.lat)*111000;
+  const dlon = (p2.lon-p1.lon)*111000*Math.cos(p1.lat*Math.PI/180);
+  return ((Math.sqrt(dlat*dlat+dlon*dlon)/dt)*3.6).toFixed(1)+' km/h';
+}
+
+function getPrediction(lat, lon) {
+  if (speedHistory.length < 3) return [];
+  const p1 = speedHistory[speedHistory.length-2];
+  const p2 = speedHistory[speedHistory.length-1];
+  const dt = (p2.t-p1.t)/1000;
+  if (dt <= 0) return [];
+  const vl = (p2.lat-p1.lat)/dt;
+  const vn = (p2.lon-p1.lon)/dt;
+  const pts = [];
+  for (let t=5; t<=30; t+=5) {
+    pts.push([lat+vl*t, lon+vn*t]);
+  }
+  return pts;
+}
+
+// ── SPECTROGRAM ────────────────────────────────────────
+const sc  = document.getElementById('spec-canvas');
+const sctx= sc.getContext('2d');
+const SW  = 236, SH = 70;
+
+function drawSpec(conf) {
+  const img = sctx.getImageData(1,0,SW-1,SH);
+  sctx.putImageData(img,0,0);
+  for (let y=0; y<SH; y++) {
+    const f = (SH-y)/SH;
+    let r,g,b;
+    if (conf > 0.6) {
+      r=Math.floor(255*f*conf);
+      g=Math.floor(80*f*(1-conf*0.5));
+      b=20;
+    } else {
+      r=10; g=Math.floor(80*f*0.4);
+      b=Math.floor(255*f*0.4);
+    }
+    sctx.fillStyle=`rgba(${r},${g},${b},${f})`;
+    sctx.fillRect(SW-1,y,1,1);
+  }
+  const pct = Math.round(conf*100);
+  document.getElementById('conf-fill').style.width = pct+'%';
+  document.getElementById('conf-fill').style.background =
+    conf>0.6 ? '#FF6B2B' : '#1E90FF';
+  document.getElementById('conf-pct').textContent = pct+'%';
+  const cs = document.getElementById('conf-status');
+  if (conf>0.6) { cs.textContent='🚨 DRONE'; cs.style.color='#FF3B5C'; }
+  else          { cs.textContent='CLEAR';    cs.style.color='#00E5A0'; }
+}
+
+// Idle animation
+setInterval(()=>{
+  if (!detectedOnce || trailPoints.length===0) {
+    drawSpec(Math.random()*0.12);
+  }
+},300);
+
+// ── MAIN HANDLER ───────────────────────────────────────
+function handlePosition(data) {
+  const lat  = data.lat;
+  const lon  = data.lon;
+  const model= data.drone_model || 'DJI Phantom 4';
+  const conf = data.confidence  || 0.9;
+  const now  = new Date().toLocaleTimeString();
+  const speed= getSpeed(lat, lon);
+
+  // Create marker once — move it every time after
+  if (!droneMarker) {
+    droneMarker = L.marker([lat,lon],{icon:droneIcon})
+                   .addTo(map);
+    detectedOnce = true;
+  } else {
+    droneMarker.setLatLng([lat,lon]);
+  }
+
+  droneMarker.bindPopup(
+    `<b style="color:#FF6B2B">🚁 ${DRONE_ID}</b><br>
+     Model: <b>${model}</b><br>
+     Confidence: <b>${Math.round(conf*100)}%</b><br>
+     Lat: ${lat.toFixed(5)}<br>
+     Lon: ${lon.toFixed(5)}<br>
+     Speed: ${speed||'calculating...'}<br>
+     Accuracy: ±18m`
+  );
+
+  // Trail
+  trailPoints.push([lat,lon]);
+  if (trailPoints.length > 30) trailPoints.shift();
+  if (trailLine) map.removeLayer(trailLine);
+  if (trailPoints.length > 1) {
+    trailLine = L.polyline(trailPoints, {
+      color:'#FFB830', weight:3,
+      opacity:0.75, dashArray:'6,4',
+    }).addTo(map);
+  }
+
+  // Prediction
+  const pred = getPrediction(lat, lon);
+  if (predLine) map.removeLayer(predLine);
+  if (pred.length > 1) {
+    predLine = L.polyline([[lat,lon],...pred], {
+      color:'#8B5CF6', weight:2,
+      opacity:0.6, dashArray:'4,6',
+    }).addTo(map);
+  }
+
+  // Stats — only update time, keep count at 1
+  document.getElementById('time-val').textContent  = now;
+  document.getElementById('drone-val').textContent = '1';
+  document.getElementById('status-val').textContent= 'ACTIVE';
+
+  // Spectrogram
+  drawSpec(conf);
+
+  // Pan to drone
+  map.panTo([lat,lon],{animate:true,duration:0.5});
+
+  // Detection log only — no counter
+  addLog(`${DRONE_ID} @ ${Math.round(conf*100)}% — ${model}`);
+
+  // Geo-fence
+  if (inGeofence(lat,lon)) {
+    if (!breachActive) {
+      breachActive = true;
+      document.getElementById('alert-banner').style.display='block';
+      geofence.setStyle({fillOpacity:0.4,color:'#FF0000',fillColor:'#FF0000'});
+      document.getElementById('status-val').textContent='⚠ BREACH';
+      document.getElementById('status-val').className='sv alert';
+      addLog(`⚠ GEO-FENCE BREACH — ${DRONE_ID}`,'alert');
+      setTimeout(()=>{
+        document.getElementById('alert-banner').style.display='none';
+      },5000);
+    }
+  } else {
+    if (breachActive) {
+      breachActive = false;
+      geofence.setStyle({fillOpacity:0.13,color:'#FF3B5C',fillColor:'#FF3B5C'});
+      document.getElementById('status-val').textContent='ACTIVE';
+      document.getElementById('status-val').className='sv';
+    }
+  }
+}
+
+// ── SOCKET ─────────────────────────────────────────────
+const socket = io();
+
+socket.on('connect', ()=>{
+  addLog('Dashboard connected to server');
+});
+
+socket.on('disconnect', ()=>{
+  document.getElementById('status-val').textContent='DISCONNECTED';
+  document.getElementById('status-val').className='sv alert';
+});
+
+socket.on('drone_position', handlePosition);
+
+// Load existing positions
+fetch('/positions')
+  .then(r=>r.json())
+  .then(list=>{
+    if (list && list.length > 0) {
+      // Only show last position to avoid multiple markers
+      handlePosition(list[list.length-1]);
+    }
+  })
+  .catch(()=>{});
+
+// Press R to reset map view
+document.addEventListener('keydown', e=>{
+  if (e.key==='r'||e.key==='R') map.setView([12.9716,77.5946],16);
+});
+</script>
+</body>
+</html>
