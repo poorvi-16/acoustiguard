@@ -27,4 +27,4 @@ Python · TensorFlow Lite · Flask · SocketIO · Leaflet.js · ESP32 · scipy
 ## Team
 Team Clusters — POORVIKA SRINIVAS
 SJB Institute of Technology
-IISc FSID Competition
+**IISc FSID Competition**
